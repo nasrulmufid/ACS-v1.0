@@ -1,0 +1,24 @@
+version: "3.9"
+
+services:
+  acs-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: acs-web:prod
+    environment:
+      - NODE_ENV=production
+      - GENIEACS_BASE_URL=http://acs-ip:7557
+      - USER_LOGIN=admin
+      - PASSWORD_LOGIN=admin
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    # Uncomment if you need a timezone inside the container
+    # environment:
+    #   - TZ=Asia/Jakarta
+
+# Usage:
+# docker compose up -d --build
+# docker compose logs -f
+# docker compose down

@@ -1,0 +1,25 @@
+# Dependencies
+node_modules
+.next/cache
+
+# Next build output can be rebuilt in image (we copy built artifacts only)
+.next/trace
+.next/diagnostics
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Env files (do not bake secrets into image)
+.env
+.env.*
+
+# Git
+.git
+.gitignore
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode
