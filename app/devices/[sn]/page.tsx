@@ -111,12 +111,79 @@ function readVlanIdFromPPP(raw: any): number | string | undefined {
   return undefined;
 }
 
+// Baca VLAN ID dari instance PPP tertentu
+function readVlanIdFromPPPInstance(raw: any, instance: number): number | string | undefined {
+  try {
+    const ppp = raw?.InternetGatewayDevice?.WANDevice?.["1"]?.WANConnectionDevice?.["1"]?.WANPPPConnection?.[String(instance)];
+    if (!ppp || typeof ppp !== 'object') return undefined;
+
+    // Kandidat umum dari beberapa vendor
+    const candidates = [
+      'X_CMCC_VLANIDMark',
+      'X_HW_VLANID',
+      'X_HW_VLANIDMark',
+      'X_ZTE-COM_VLANID',
+      'X_FH_VLANID',
+      'X_CT-COM_VLANID',
+      'X_CU_VLANID',
+      'VLANID',
+      'VLANIDMark',
+    ];
+
+    for (const key of candidates) {
+      const v = (ppp as any)?.[key]?._value ?? (ppp as any)?.[key];
+      if (v !== undefined && v !== null && String(v).trim() !== '') {
+        return v;
+      }
+    }
+
+    // Fallback: scan key yang mengandung "VLAN"
+    for (const [k, obj] of Object.entries(ppp)) {
+      if (/vlan/i.test(k)) {
+        const v = (obj as any)?._value ?? (obj as any);
+        if (v !== undefined && v !== null && String(v).trim() !== '') return v;
+      }
+    }
+  } catch {}
+  return undefined;
+}
+
+// Ekstrak informasi dari instance PPP tertentu
+function extractPPPInstanceData(raw: any, instance: number) {
+  try {
+    const ppp = raw?.InternetGatewayDevice?.WANDevice?.["1"]?.WANConnectionDevice?.["1"]?.WANPPPConnection?.[String(instance)];
+    if (!ppp || typeof ppp !== 'object') return null;
+
+    return {
+      username: ppp?.Username?._value ?? ppp?.username?._value ?? '',
+      connectionType: ppp?.ConnectionType?._value ?? ppp?.connectionType?._value ?? '',
+      enable: ppp?.Enable?._value ?? ppp?.enable?._value ?? '',
+      vlanId: readVlanIdFromPPPInstance(raw, instance),
+      serviceList: ppp?.X_HW_ServiceList?._value ?? ppp?.serviceList?._value ?? 'INTERNET',
+    };
+  } catch {
+    return null;
+  }
+}
+
 export default function DeviceDetailPage() {
   const params = useParams();
   const router = useRouter();
   const sn = (params?.sn as string) ?? "";
 
   const [detail, setDetail] = useState<DeviceDetail | null>(null);
+
+  // State untuk refresh dan alert
+  const [refreshingDevice, setRefreshingDevice] = useState(false);
+  const [refreshingWan, setRefreshingWan] = useState(false);
+  const [refreshingWifi, setRefreshingWifi] = useState(false);
+  const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Fungsi untuk menampilkan alert dengan auto-hide
+  const showAlert = (type: 'success' | 'error', message: string) => {
+    setNotification({ type, message });
+    setTimeout(() => setNotification(null), 3000);
+  };
 
   useEffect(() => {
     let aborted = false;
@@ -180,7 +247,10 @@ export default function DeviceDetailPage() {
             }));
           })(),
         };
-        if (!aborted) setDetail(mapped);
+        if (!aborted) {
+          setDetail(mapped);
+          setRawDeviceData(raw); // Store raw data for instance-specific operations
+        }
       } catch (e) {
         if (!aborted) setDetail(null);
       }
@@ -188,6 +258,75 @@ export default function DeviceDetailPage() {
     if (sn) load();
     return () => { aborted = true; };
   }, [sn]);
+
+  // Fungsi refresh untuk informasi device
+  const refreshDeviceInfo = async () => {
+    if (!sn || refreshingDevice) return;
+    setRefreshingDevice(true);
+    try {
+      const res = await fetch(`/api/devices/${encodeURIComponent(sn)}/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'device' }),
+      });
+      if (!res.ok) throw new Error('Failed to refresh device info');
+      showAlert('success', 'Informasi perangkat berhasil diperbarui');
+      // Reload data setelah refresh
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+    } catch (error) {
+      showAlert('error', 'Gagal memperbarui informasi perangkat');
+    } finally {
+      setRefreshingDevice(false);
+    }
+  };
+
+  // Fungsi refresh untuk informasi WAN
+  const refreshWanInfo = async () => {
+    if (!sn || refreshingWan) return;
+    setRefreshingWan(true);
+    try {
+      const res = await fetch(`/api/devices/${encodeURIComponent(sn)}/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'wan' }),
+      });
+      if (!res.ok) throw new Error('Failed to refresh WAN info');
+      showAlert('success', 'Informasi WAN berhasil diperbarui');
+      // Reload data setelah refresh
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+    } catch (error) {
+      showAlert('error', 'Gagal memperbarui informasi WAN');
+    } finally {
+      setRefreshingWan(false);
+    }
+  };
+
+  // Fungsi refresh untuk informasi WiFi
+  const refreshWifiInfo = async () => {
+    if (!sn || refreshingWifi) return;
+    setRefreshingWifi(true);
+    try {
+      const res = await fetch(`/api/devices/${encodeURIComponent(sn)}/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'wifi' }),
+      });
+      if (!res.ok) throw new Error('Failed to refresh WiFi info');
+      showAlert('success', 'Informasi WiFi berhasil diperbarui');
+      // Reload data setelah refresh
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+    } catch (error) {
+      showAlert('error', 'Gagal memperbarui informasi WiFi');
+    } finally {
+      setRefreshingWifi(false);
+    }
+  };
 
   const badgeWanStatus: { label: string; color: string } = useMemo(() => {
     if (!detail) return { label: "-", color: "border-foreground/20 text-foreground/60" };
@@ -216,6 +355,8 @@ export default function DeviceDetailPage() {
 
   // UI state untuk modal Delete WAN
   const [showDeleteWan, setShowDeleteWan] = useState(false);
+  const [deleteIndexOptions, setDeleteIndexOptions] = useState<number[]>([]);
+  const [deleteIndex, setDeleteIndex] = useState<number | "">("");
 
   // UI state untuk modal Edit WAN
   const [showEditWan, setShowEditWan] = useState(false);
@@ -229,19 +370,36 @@ export default function DeviceDetailPage() {
   const [editCustomVlanKey, setEditCustomVlanKey] = useState("");
   const [editEnable, setEditEnable] = useState<boolean | "">("");
   const [editConnectionType, setEditConnectionType] = useState<string>("");
+  const [rawDeviceData, setRawDeviceData] = useState<any>(null);
+
+  // Function to load values from selected instance
+  const loadInstanceValues = (instanceIndex: number) => {
+    if (!rawDeviceData) return;
+    
+    const instanceData = extractPPPInstanceData(rawDeviceData, instanceIndex);
+    if (instanceData) {
+      setEditUsername(instanceData.username || "");
+      setEditVlanId(instanceData.vlanId ?? "");
+      setEditServiceList(instanceData.serviceList || "INTERNET");
+      setEditConnectionType(instanceData.connectionType || "");
+      setEditEnable(instanceData.enable !== "" ? Boolean(instanceData.enable) : "");
+    } else {
+      // Reset to defaults if no data found
+      setEditUsername("");
+      setEditVlanId("");
+      setEditServiceList("INTERNET");
+      setEditConnectionType("");
+      setEditEnable("");
+    }
+    // Always reset password for security
+    setEditPassword("");
+    setEditVendor("auto");
+    setEditCustomVlanKey("");
+  };
 
   // Handlers
   const handleOpenEditWan = async () => {
     if (!sn) return;
-    // Prefill dari detail yang ada
-    setEditUsername(detail?.wan.usernamePpp || "");
-    setEditPassword("");
-    setEditVlanId(detail?.wan.vlanId ?? "");
-    setEditServiceList("INTERNET");
-    setEditVendor("auto");
-    setEditCustomVlanKey("");
-    setEditEnable("");
-    setEditConnectionType("");
 
     // Ambil daftar index PPP dari device untuk pilihan instance
     try {
@@ -249,16 +407,32 @@ export default function DeviceDetailPage() {
       const json = await res.json();
       const list = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : [];
       const raw = list?.[0] ?? null;
+      setRawDeviceData(raw); // Update raw data
+      
       const pppObj = raw?.InternetGatewayDevice?.WANDevice?.["1"]?.WANConnectionDevice?.["1"]?.WANPPPConnection || {};
       const indices = Object.keys(pppObj)
         .map((k) => Number(k))
         .filter((n) => Number.isFinite(n))
         .sort((a, b) => a - b);
       setEditIndexOptions(indices);
-      setEditIndex(indices.length ? indices[indices.length - 1] : 1);
+      
+      const defaultIndex = indices.length ? indices[indices.length - 1] : 1;
+      setEditIndex(defaultIndex);
+      
+      // Load values from the default selected instance
+      loadInstanceValues(defaultIndex);
     } catch (e) {
       setEditIndexOptions([1]);
       setEditIndex(1);
+      // Fallback to current detail values
+      setEditUsername(detail?.wan.usernamePpp || "");
+      setEditPassword("");
+      setEditVlanId(detail?.wan.vlanId ?? "");
+      setEditServiceList("INTERNET");
+      setEditVendor("auto");
+      setEditCustomVlanKey("");
+      setEditEnable("");
+      setEditConnectionType("");
     }
 
     setShowEditWan(true);
@@ -294,7 +468,27 @@ export default function DeviceDetailPage() {
     }
   };
 
-  const handleDeleteWan = () => {
+  const handleDeleteWan = async () => {
+    if (!sn) return;
+    
+    // Ambil daftar index PPP dari device untuk pilihan instance
+    try {
+      const res = await fetch(`/api/devices/${encodeURIComponent(sn)}`, { cache: 'no-store' });
+      const json = await res.json();
+      const list = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : [];
+      const raw = list?.[0] ?? null;
+      const pppObj = raw?.InternetGatewayDevice?.WANDevice?.["1"]?.WANConnectionDevice?.["1"]?.WANPPPConnection || {};
+      const indices = Object.keys(pppObj)
+        .map((k) => Number(k))
+        .filter((n) => Number.isFinite(n))
+        .sort((a, b) => a - b);
+      setDeleteIndexOptions(indices);
+      setDeleteIndex(indices.length ? indices[0] : 1);
+    } catch (e) {
+      setDeleteIndexOptions([1]);
+      setDeleteIndex(1);
+    }
+    
     setShowDeleteWan(true);
   };
   const handleAddWan = () => {
@@ -399,6 +593,34 @@ export default function DeviceDetailPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-background/70 text-foreground">
+      {/* Alert Component */}
+      {notification && (
+        <div className={`fixed top-4 right-4 z-50 max-w-sm w-full transform transition-all duration-300 ease-in-out ${
+          notification ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'
+        }`}>
+          <div className={`rounded-lg border p-4 shadow-lg ${
+            notification.type === 'success' 
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-200'
+              : 'bg-rose-50 border-rose-200 text-rose-800 dark:bg-rose-900/20 dark:border-rose-800 dark:text-rose-200'
+          }`}>
+            <div className="flex items-center">
+              <div className={`flex-shrink-0 w-5 h-5 mr-3 ${
+                notification.type === 'success' ? 'text-emerald-500' : 'text-rose-500'
+              }`}>
+                {notification.type === 'success' ? '✓' : '✕'}
+              </div>
+              <p className="text-sm font-medium">{notification.message}</p>
+              <button
+                onClick={() => setNotification(null)}
+                className="ml-auto flex-shrink-0 text-current opacity-70 hover:opacity-100"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="mx-auto max-w-5xl p-4 sm:p-6 lg:p-10 space-y-4 sm:space-y-6">
         {/* Back */}
         <div>
@@ -442,6 +664,30 @@ export default function DeviceDetailPage() {
                 <dd className="font-medium text-sm">{detail.rxPower}dbm</dd>
               </div>
             </dl>
+            
+            {/* Refresh Button */}
+            <div className="flex justify-center pt-4">
+              <button
+                onClick={refreshDeviceInfo}
+                disabled={refreshingDevice}
+                className={`
+                  relative overflow-hidden px-6 py-2.5 rounded-full text-sm font-medium
+                  transition-all duration-300 transform hover:scale-105 active:scale-95
+                  ${refreshingDevice 
+                    ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-500 cursor-not-allowed' 
+                    : 'bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white shadow-lg hover:shadow-emerald-500/25'
+                  }
+                  disabled:transform-none disabled:hover:scale-100
+                `}
+              >
+                {refreshingDevice && (
+                  <div className="absolute inset-0 bg-gradient-to-r from-emerald-200/50 to-emerald-300/50 animate-pulse" />
+                )}
+                <span className="relative z-10">
+                  {refreshingDevice ? 'Memperbarui Data...' : 'Refresh Data'}
+                </span>
+              </button>
+            </div>
           </div>
 
           {/* Card Informasi WAN */}
@@ -473,7 +719,25 @@ export default function DeviceDetailPage() {
                     </RDialog.Close>
                   </div>
 
-                  <p className="mt-3 text-sm text-foreground/70">Anda yakin ingin menghapus konfigurasi WAN perangkat ini?</p>
+                  <div className="mt-3 space-y-3">
+                    <p className="text-sm text-foreground/70">Pilih instance WAN yang akan dihapus:</p>
+                    
+                    <div>
+                      <label className="block text-sm text-foreground/60 mb-1">Instance PPP</label>
+                      <select
+                        className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring"
+                        value={String(deleteIndex)}
+                        onChange={(e) => setDeleteIndex(e.target.value === '' ? '' : Number(e.target.value))}
+                        required
+                      >
+                        {deleteIndexOptions.map((idx) => (
+                          <option key={idx} value={idx}>Instance {idx}</option>
+                        ))}
+                      </select>
+                    </div>
+                    
+                    <p className="text-sm text-foreground/70">Anda yakin ingin menghapus konfigurasi WAN instance {deleteIndex}?</p>
+                  </div>
 
                   <div className="mt-6 flex flex-col sm:flex-row justify-end gap-2">
                     <RDialog.Close asChild>
@@ -482,7 +746,11 @@ export default function DeviceDetailPage() {
                     <RDialog.Close asChild>
                       <Button intent="danger" className="w-full sm:w-auto" onClick={async () => {
                         try {
-                          const res = await fetch(`/api/devices/${encodeURIComponent(sn)}/wan`, { method: 'DELETE' });
+                          const res = await fetch(`/api/devices/${encodeURIComponent(sn)}/wan`, { 
+                            method: 'DELETE',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ index: deleteIndex })
+                          });
                           if (!res.ok) throw new Error(String(res.status));
                           location.reload();
                         } catch (e) {
@@ -514,6 +782,30 @@ export default function DeviceDetailPage() {
                 <dd className="font-medium text-sm">{detail.wan.vlanId ?? "-"}</dd>
               </div>
             </dl>
+
+            {/* Refresh Button */}
+            <div className="flex justify-center pt-4">
+              <button
+                onClick={refreshWanInfo}
+                disabled={refreshingWan}
+                className={`
+                  relative overflow-hidden px-6 py-2.5 rounded-full text-sm font-medium
+                  transition-all duration-300 transform hover:scale-105 active:scale-95
+                  ${refreshingWan 
+                    ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-500 cursor-not-allowed' 
+                    : 'bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white shadow-lg hover:shadow-indigo-500/25'
+                  }
+                  disabled:transform-none disabled:hover:scale-100
+                `}
+              >
+                {refreshingWan && (
+                  <div className="absolute inset-0 bg-gradient-to-r from-indigo-200/50 to-indigo-300/50 animate-pulse" />
+                )}
+                <span className="relative z-10">
+                  {refreshingWan ? 'Memperbarui WAN...' : 'Refresh WAN'}
+                </span>
+              </button>
+            </div>
 
             {/* Modal Add WAN */}
             <RDialog.Root open={showAddWan} onOpenChange={(o) => !o && setShowAddWan(false)}>
@@ -629,11 +921,17 @@ export default function DeviceDetailPage() {
                       <select
                         className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring"
                         value={String(editIndex)}
-                        onChange={(e) => setEditIndex(e.target.value === '' ? '' : Number(e.target.value))}
+                        onChange={(e) => {
+                          const newIndex = e.target.value === '' ? '' : Number(e.target.value);
+                          setEditIndex(newIndex);
+                          if (typeof newIndex === 'number') {
+                            loadInstanceValues(newIndex);
+                          }
+                        }}
                         required
                       >
                         {editIndexOptions.map((idx) => (
-                          <option key={idx} value={idx}>{idx}</option>
+                          <option key={idx} value={idx}>Instance {idx}</option>
                         ))}
                       </select>
                     </div>
@@ -769,6 +1067,30 @@ export default function DeviceDetailPage() {
                 <dd className="font-medium text-sm">{detail.wifi.power}</dd>
               </div>
             </dl>
+
+            {/* Refresh Button */}
+            <div className="flex justify-center pt-4">
+              <button
+                onClick={refreshWifiInfo}
+                disabled={refreshingWifi}
+                className={`
+                  relative overflow-hidden px-6 py-2.5 rounded-full text-sm font-medium
+                  transition-all duration-300 transform hover:scale-105 active:scale-95
+                  ${refreshingWifi 
+                    ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 cursor-not-allowed' 
+                    : 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-lg hover:shadow-amber-500/25'
+                  }
+                  disabled:transform-none disabled:hover:scale-100
+                `}
+              >
+                {refreshingWifi && (
+                  <div className="absolute inset-0 bg-gradient-to-r from-amber-200/50 to-amber-300/50 animate-pulse" />
+                )}
+                <span className="relative z-10">
+                  {refreshingWifi ? 'Memperbarui WiFi...' : 'Refresh WiFi'}
+                </span>
+              </button>
+            </div>
 
             {/* Modal Edit WiFi (SSID & Password) */}
             <RDialog.Root open={showEditWifi} onOpenChange={(o) => !o && setShowEditWifi(false)}>

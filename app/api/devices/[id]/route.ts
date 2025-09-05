@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 export const runtime = "nodejs";
 
 function getGenieConfig() {
-  const baseUrl = process.env.GENIEACS_BASE_URL || "http://103.106.145.23:7557";
+  const baseUrl = process.env.GENIEACS_BASE_URL || "http://localhost:7557";
   const username = process.env.GENIEACS_USERNAME || "";
   const password = process.env.GENIEACS_PASSWORD || "";
   const timeoutMs = Number(process.env.GENIEACS_TIMEOUT_MS ?? 10000);
